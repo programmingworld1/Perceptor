@@ -1,0 +1,98 @@
+```{R}
+###################################
+##### packages ####################
+###################################
+library(tidyverse) # We use tidyverse to graphs, tidy, transformation and much more
+library(rvest) # To extract data from websites
+library(lubridate) # To convert string to data.frame
+library(patchwork)
+library(visdat)
+
+
+###################################
+##### properties ##################
+###################################
+# Read the html data from the page
+url_toMatchListTeamAF <- 'https://gol.gg/teams/team-matchlist/1091/split-Spring/tournament-ALL/'
+
+
+
+#######################################
+##### function calls ##################
+#######################################
+teamAFMatchListHTML <- read_html(url_toMatchListTeamAF)
+
+teamAFMatchList <- getDataFromHTML(teamAFMatchListHTML)
+
+teamAFMatchList <- convertListToDataFrame(teamAFMatchList)
+
+teamAFMatchList <- setColumnNames(teamAFMatchList)
+
+# Check for missing values and fill these values
+sum(is.na(teamAFMatchList))
+sum(is.na(teamAFMatchList$Side))
+teamAFMatchList <- fillSideValues(teamAFMatchListHTML)
+sum(is.na(teamAFMatchList$Side))
+sum(is.na(teamAFMatchList))
+
+
+teamAFMatchListDragonsPlot <- gather(teamAFMatchList, key = "dragons", value = "dragons_slayed", AF_Dragons, Enemy_Dragons)
+
+
+showPlots()
+
+
+##################################
+##### functions ##################
+##################################
+
+# Some columns names were missing, that's why I added them myself
+setColumnNames <- function(teamAFMatchList){
+  colnames(teamAFMatchList)[c(1, 4, 5, 6, 7, 9, 10, 11, 12)] <- c("Result", "AF_Kills", "AF_Golds", 
+                                                                  "AF_Towers", "AF_Dragons", "Enemy_Kills", 
+                                                                  "Enemy_Golds", "Enemy_Towers", "Enemy_Dragons")
+  
+  return(teamAFMatchList)
+}
+
+# I couldn't plot a list, print column names etc.. so I had to convert it to a data frame. DF is also easier to work with.
+convertListToDataFrame <- function(teamAFMatchList){
+  result <- as.data.frame(teamAFMatchList)
+  
+  return (result)
+}
+
+# The column 'Side' are images in the html, so it's empty. I decided to extract the terms 'redside and blueside' if the character vector has those values. Then, those values are placed under the correct column
+fillSideValues <- function(teamAFMatchListHTML){
+  sideValues <- teamAFMatchListHTML %>% html_nodes("td > img") %>% html_attr("src")
+  sideHelperList <- c("redside", "blueside")
+  parsedSideValues <- str_extract_all(sideValues, str_c(sideHelperList, collapse="|"), simplify = TRUE)[,1]
+  teamAFMatchList$Side<-parsedSideValues
+  return(teamAFMatchList)
+}
+
+# We need to take the data out of the html code
+getDataFromHTML <- function(html){
+  result <- html %>%
+  html_nodes(".table_list") %>%
+  html_table()
+  
+  return (result)
+}
+
+# This is where the plots are made and rendered
+showPlots <- function()
+{
+  p1 <- ggplot(teamAFMatchList, aes(x=Side, fill=Result)) + 
+  geom_bar(stat="count", position=position_dodge()) + # use position to show double bar instead of single
+  scale_fill_manual("legend", values = c("LOSS" = "red", "WIN" = "green")) 
+    
+  p2 <- teamAFMatchListDragonsPlot %>% 
+  ggplot(aes(x=dragons, y=dragons_slayed, fill=dragons)) + 
+  geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank())
+
+  p1 + p2
+}
+
+```
