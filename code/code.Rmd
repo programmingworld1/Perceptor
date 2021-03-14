@@ -7,19 +7,14 @@ library(rvest) # To extract data from websites
 library(lubridate) # To convert string to data.frame
 library(patchwork)
 library(visdat)
+```
 
-
-###################################
-##### properties ##################
-###################################
-# Read the html data from the page
+```{R}
+#######################################
+##### prepare data ##################
+#######################################
 url_toMatchListTeamAF <- 'https://gol.gg/teams/team-matchlist/1091/split-Spring/tournament-ALL/'
 
-
-
-#######################################
-##### function calls ##################
-#######################################
 teamAFMatchListHTML <- read_html(url_toMatchListTeamAF)
 
 teamAFMatchList <- getDataFromHTML(teamAFMatchListHTML)
@@ -37,14 +32,20 @@ sum(is.na(teamAFMatchList))
 
 
 teamAFMatchListDragonsPlot <- gather(teamAFMatchList, key = "dragons", value = "dragons_slayed", AF_Dragons, Enemy_Dragons)
+```
 
+```{r}
+##################################
+##### render #####################
+##################################
 
 showPlots()
+```
 
-
-##################################
-##### functions ##################
-##################################
+```{R}
+#########################################
+##### helper functions ##################
+#########################################
 
 # Some columns names were missing, that's why I added them myself
 setColumnNames <- function(teamAFMatchList){
@@ -94,5 +95,4 @@ showPlots <- function()
 
   p1 + p2
 }
-
 ```
