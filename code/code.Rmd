@@ -7,22 +7,20 @@ library(rvest) # To extract data from websites
 library(lubridate) # To convert string to data.frame
 library(patchwork)
 library(visdat) # For missingness
+
 ```
 
 ```{R}
 #######################################
 ##### prepare data ##################
 #######################################
+
+# Prepare matchlist data
 url_toMatchListTeamAF <- 'https://gol.gg/teams/team-matchlist/1091/split-Spring/tournament-ALL/'
-
 teamAFMatchListHTML <- read_html(url_toMatchListTeamAF)
-
-teamAFMatchList <- getDataFromHTML(teamAFMatchListHTML)
-
+teamAFMatchList <- getDataFromHTML(teamAFMatchListHTML, '.table_list')
 teamAFMatchList <- convertListToDataFrame(teamAFMatchList)
-
 teamAFMatchList <- setColumnNames(teamAFMatchList)
-
 # Check for missing values and fill these values
 sum(is.na(teamAFMatchList))
 sum(is.na(teamAFMatchList$Side))
@@ -30,15 +28,93 @@ teamAFMatchList <- fillSideValues(teamAFMatchListHTML)
 sum(is.na(teamAFMatchList$Side))
 sum(is.na(teamAFMatchList))
 
-
+# Prepare data for dragon barchart
 teamAFMatchListDragonsPlot <- gather(teamAFMatchList, key = "dragons", value = "dragons_slayed", AF_Dragons, Enemy_Dragons)
-```
 
+# Prepare data for Kill/Death ratio
+killDeathRationDF <- data.frame(
+  result = c('kill','death'),
+  total = c(sum(teamAFMatchList$AF_Kills),sum(teamAFMatchList$Enemy_Kills)))
+
+goldstats = data.frame(team = c('AF', 'Enemy'),
+           amountOfGold = c(teamAFMatchList$AF_Golds, teamAFMatchList$Enemy_Golds))
+
+
+
+
+
+
+
+
+# Prepare player stats for each match
+detailPageUrls <- teamAFMatchListHTML %>% html_nodes("td > a") %>% html_attr("href")
+detailPageUrls <- grep('page-game', detailPageUrls, value=TRUE)
+detailPageUrls <- as.numeric(str_extract_all(detailPageUrls, "[0-9]+"))
+detailPageUrls <- paste("https://gol.gg/game/stats/", detailPageUrls, sep="")
+detailPageUrls <- paste(detailPageUrls, "/page-fullstats/", sep="")
+
+playersStats = list()
+  
+for (i in c(1:3)){ # maak van de tweede 1 length(detailPageUrls)
+  playersStatsHTML <- read_html(detailPageUrls[i])
+  playerStats <- getDataFromHTML(playersStatsHTML, '.completestats') 
+  playerStats <- convertListToDataFrame(playerStats)
+  
+  playersStats[[i]] <- preparePlayerStats(i, playerStats)
+}
+print(bind_rows(playersStats))
+
+# combine the dataframes in the playersStats list, and then transform the data
+agressiveness <-  group_by(bind_rows(playersStats), team) %>% summarise(total_damage = sum(as.integer(`Total damage to Champion`)), total_kills = sum(as.integer(Kills)), damage_per_kill = total_damage / total_kills)
+agressiveness
+# wards barchart preparation
+wards <- gather(bind_rows(playersStats), key = "wardsType", value = "amount", `Wards placed`, `Wards destroyed`)
+wards <- group_by(wards, team, wardsType) %>% summarise(total = sum(as.integer(amount)))
+
+# damage to turrets preperation
+damageTowers <- bind_rows(playersStats) %>% group_by(team) %>% summarise(damageDealtToTowers = sum(as.integer(`Damage dealt to turrets`)))
+
+# stunning preperation
+timeStunning <- bind_rows(playersStats) %>% group_by(team) %>% summarise(stunningTime = sum(as.integer(`Time ccing others`)))
+
+# health preperation
+totalHeal <- bind_rows(playersStats) %>% group_by(team) %>% summarise(totalHealth = sum(as.integer(`Total heal`)))
+
+# health preperation
+csPerMin <- bind_rows(playersStats) %>% group_by(team) %>% summarise(csm = sum(as.integer(`CSM`)))
+```
 
 ```{R}
 #########################################
 ##### helper functions ##################
 #########################################
+
+preparePlayerStats <- function(i, playerStats) {
+  # Read all html stats pages for each match
+  playerStats <- convertListToDataFrame(t(playerStats)) # with the T we rotate the columns/rows
+
+  # The column names are not correct. So we take the first row as a vector and assign that as column names
+  colnames(playerStats) <- playerStats[1,]
+  # We remove the first row because those are converted to column names in the previous code line
+  playerStats = playerStats[-1,]
+  
+  # The rows of the first columns names has also changed, we set that back
+  rownames(playerStats) <- c(1:10)
+  
+  v <- c('Kinn','Dread','Fly','Bang', 'Lehends')
+
+  # Based on the vector above, we decide who belongs to what team. We need this column to group the rows
+  for (x in 1:length(playerStats$Player)) {
+    if(playerStats$Player[x] %in% v)
+    {
+      playerStats$team[x] <- 'AF'
+    } else{
+      playerStats$team[x] <- 'Enemy'
+    }
+  }
+
+  return(playerStats)
+}
 
 # Some columns names were missing, that's why I added them myself
 setColumnNames <- function(teamAFMatchList){
@@ -66,9 +142,9 @@ fillSideValues <- function(teamAFMatchListHTML){
 }
 
 # We need to take the data out of the html code
-getDataFromHTML <- function(html){
+getDataFromHTML <- function(html, elementName){
   result <- html %>%
-  html_nodes(".table_list") %>%
+  html_nodes(elementName) %>%
   html_table()
   
   return (result)
@@ -77,33 +153,79 @@ getDataFromHTML <- function(html){
 # This is where the plots are made and rendered
 showPlots <- function()
 {
+  hist(teamAFMatchList$Enemy_Dragons)
+  
   p1 <- ggplot(teamAFMatchList, aes(x=Result, fill=Result)) + 
     geom_bar(stat="count", show.legend = FALSE) +
     scale_fill_manual(values = c("LOSS" = "red", "WIN" = "green")) +
-    ggtitle("Sum of wins vs losses team AF has")
+    ggtitle("Win/Lose rate")
   
   p2 <- ggplot(teamAFMatchList, aes(x=Side, fill=Result)) + 
     geom_bar(stat="count", position=position_dodge()) + # use position to show double bar instead of single
     scale_fill_manual("legend", values = c("LOSS" = "red", "WIN" = "green")) +
-    ggtitle("Sum of wins vs losses on each map side")
+    ggtitle("Win/Lose on map side")
 
   p3 <- teamAFMatchListDragonsPlot %>% 
     ggplot(aes(x=dragons, y=dragons_slayed, fill=dragons)) + 
     geom_bar(stat="identity") +
     theme(axis.text.x=element_blank()) +
-    ggtitle("Sum of dragons slayed by team AF and enemy teams")
+    ggtitle("Dragons slayed rate")
 
-  p4 <- teamAFMatchList %>%
-    group_by(Result) %>%
-    summarise(amountOfGold = sum(AF_Golds)) %>%
-    ggplot(aes(x=Result, y = amountOfGold, fill=Result)) + 
+  p4 <- ggplot(goldstats, aes(x=team, y = amountOfGold, fill=team)) + 
     geom_bar(stat="identity") +
-    ggtitle("Amount of gold team AF and enemy teams combined have")
+    ggtitle("Amount of gold rate")
+  
+  p5 <- ggplot(killDeathRationDF, aes(x=result, y=total, fill=result)) + 
+    geom_bar(stat="identity") +
+    scale_fill_manual("legend", values = c("death" = "red", "kill" = "green")) +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Kill/Death ratio")
+  
+  
+  p6 <- agressiveness %>% 
+    ggplot(aes(x=team, y=damage_per_kill, fill=team)) + 
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Damage per kill")
+  
+  p7 <- wards %>% 
+    ggplot(aes(x=team, y=total, fill=wardsType)) + 
+    geom_bar(stat="identity", position=position_dodge()) +
+    ggtitle("Wards/Vision stats")
+  
+  p8 <- damageTowers %>%
+    ggplot(aes(x=team, y=damageDealtToTowers, fill=team)) + 
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Damage dealt to turrets")
+  
+  p9 <- agressiveness %>%
+    ggplot(aes(x=team, y=total_damage, fill=team)) + 
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Damage dealt to enemy")
+  
+  p10 <- timeStunning %>%
+    ggplot(aes(x=team, y=stunningTime, fill=team)) + 
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Time stunning enemy")
+  
+  p11 <- totalHeal %>%
+    ggplot(aes(x=team, y=totalHealth, fill=team)) + 
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Total health")
+  
+  p12 <- csPerMin %>%
+    ggplot(aes(x=team, y=csm, fill=team)) + 
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_blank()) +
+    ggtitle("Farm Per Minute")
 
-  p1 + p2 + p3 + p4
+  p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 + p10 + p11 + p12
 }
 ```
-
 
 ```{r}
 ##################################
